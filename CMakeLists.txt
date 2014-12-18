@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 2.8.5)
-PROJECT( test1 C)
+PROJECT( test1)
+
 #openMP to avoid link error : omp_xxx error!
 # undefined reference to `GOMP_loop_dynamic_start
 find_package(OpenMP)
@@ -8,10 +9,16 @@ if(OPENMP_FOUND)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 endif()
 
-PROJECT( test1 )
-
 ADD_EXECUTABLE( test1
 	test1.c
+	)
+
+ADD_EXECUTABLE( test2
+	test2.c
+	)
+
+ADD_EXECUTABLE( genki
+	genki.c
 	)
 
 #dynamic or static link
