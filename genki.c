@@ -1,33 +1,26 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/sysinfo.h>
 #include <assert.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/sysinfo.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include "omp.h"
+#include <cv.h>
+#include <highgui.h>
 
-#if 0
-           struct sysinfo {
-               long uptime;             /* Seconds since boot */
-               unsigned long loads[3];  /* 1, 5, and 15 minute load averages */
-               unsigned long totalram;  /* Total usable main memory size */
-               unsigned long freeram;   /* Available memory size */
-               unsigned long sharedram; /* Amount of shared memory */
-               unsigned long bufferram; /* Memory used by buffers */
-               unsigned long totalswap; /* Total swap space size */
-               unsigned long freeswap;  /* swap space still available */
-               unsigned short procs;    /* Number of current processes */
-               unsigned long totalhigh; /* Total high memory size */
-               unsigned long freehigh;  /* Available high memory size */
-               unsigned int mem_unit;   /* Memory unit size in bytes */
-               char _f[20-2*sizeof(long)-sizeof(int)]; /* Padding for libc5 */
-           };
-#endif
 
 #define	MAX_OBJ_FILENAME_LEN	(81)
 #define	MAX_OBJ_FILES		(1000000)
-#define	MAX_FILE_PATH_SIZE	(4096)
+#define	MAX_FILE_PATH_SIZE	(1024)
 
 #define	CV_DATASET_GENKI_IMAGES		"/Subsets/GENKI-SZSL/GENKI-SZSL_Images.txt"
 #define	CV_DATASET_GENKI_LABELS	   	"/Subsets/GENKI-SZSL/GENKI-SZSL_labels.txt"
+
+#define max( a, b ) ((a) > (b) ? (a) : (b) )
+#define min( a, b ) ((a) < (b) ? (a) : (b) )
+//inline int max ( int a, int b ) { return a > b ? a : b; }
 
 typedef struct _genki_bounding_box{
 int	center_col;	//X of the box center
@@ -41,24 +34,166 @@ void *pGenkiImgList;
 void *pGenkiLabelList;
 
 /*
+ * raw intensity data
+ *
+ * im is an array/list from a cropped image around the face bounding box:
+ * im dim : row * col
+ * rid file : 4 bytes width, 4 bytes height , image data (row-wise)
+ */
+int saveAsRID(char *path, IplImage* src,  CvRect roi)
+{
+	//assert(path && src);
+	int fd = open(path, O_RDWR|O_CREAT|O_TRUNC, 0664 );
+	printf("%s:roi(x,y,w,h)=(%d,%d,%d,%d)\n",__func__, roi.x, roi.y,
+		   roi.width, roi.height);
+	printf("src(w,h,s)=(%d,%d,%d)\n", src->width, src->height, src->imageSize);
+	if(fd > 0){
+		// Must have dimensions of output image
+		IplImage* cropped = cvCreateImage( cvSize(roi.width,roi.height), src->depth, src->nChannels );
+		if(cropped){
+			// Say what the source region is
+			cvSetImageROI( src, roi );
+			// Do the copy
+			//cvCopy( src, cropped, NULL );
+			printf("crop:%d x %d : %d bytes\n", cropped->width, cropped->height,
+				   cropped->imageSize);
+			cvResetImageROI( src );
+			//cvSaveImage (path , cropped);
+			write(fd, &roi.width,sizeof(int));	//4 bytes w
+			write(fd, &roi.height,sizeof(int));	//4 bytes h
+			write(fd, cropped->imageData, cropped->imageSize);	//body
+			printf("%d x %d : %d bytes\n", roi.width, roi.height, cropped->imageSize);
+			cvReleaseImage(&cropped);
+			close(fd);
+		}else{
+			printf("[%d,%d,%d,%d] crop fails to create.\n", roi.width,roi.height,
+				src->depth, src->nChannels);
+		}
+	}else{
+		printf("[%s] fails to open:%d\n", path,errno);
+	}
+	return errno;
+}
+
+
+/*
+ * write 7 random boxes to list.txt for each rid.
+ *  1 face0.rid
+ *  2     7	==> 7 random boxs
+ *  3     54.128180 54.193473 61.633318
+ *  4     50.617332 47.980850 62.638414
+ *  5     54.102598 52.237606 61.709570
+ *  6     53.919454 51.292225 71.041327
+ *  7     52.621050 51.479368 70.888629
+ *  8     50.815017 53.567457 62.003842
+ *  9     51.473735 49.503986 67.789544
+ *
+ */
+void export(IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList, CvRNG rng)
+{
+	assert(image);
+	int nrows = image->height;
+	int ncols = image->width;
+	int r, c, s;
+	r = bbox.center_row;
+	c = bbox.center_col;
+	s = bbox.diameter;
+
+	/* The new cropped area is bounded by +-0.75diameter around box center (r,c).
+	 * The new cropped area is bigger than the original face bounding box, +-0.5diameter,
+	 * around box center (r,c)
+	 */
+	int r0 = max((r - 0.75*s), 0);
+	int r1 = min(r + 0.75*s, nrows);
+	int c0 = max((c - 0.75*s), 0);
+	int c1 = min(c + 0.75*s, ncols);
+
+	//the new cropped image containing the original face bounding box.
+	//the new dim of the cropped image
+	nrows = r1- r0 + 1;
+	ncols = c1- c0 + 1;
+
+	//the new bounding box center in the new cropped image
+	r = r - r0;
+	c = c - c0;
+
+	//resize, if needed
+	float maxwsize = 192.0;
+	int wsize = max(nrows, ncols);
+	float ratio = maxwsize/wsize;
+
+	if (ratio<1.0){//resize the pic because it's > maxwsize
+		//im = numpy.asarray( Image.fromarray(im).resize((int(ratio*ncols), int(ratio*nrows))) )
+
+		r = ratio*r;
+		c = ratio*c;
+		s = ratio*s;
+	}
+	#pragma omp critical
+	{
+		fprintf(fList, "face%d.rid\n",id);
+
+		//creating 7 randomized face bounding boxes from the original bounding box
+		int nrands = 7;
+		//write '7' to list.txt
+		fprintf(fList, "\t%d\n",nrands);
+		int i;
+		for(i= 0; i < nrands; i ++){
+			float stmp, rtmp, ctmp;
+			//uniformly randomize size (diameter of the bounding box) ratio 0.9-1.1, 10% random
+			//stmp = s*random.uniform(0.9, 1.1)
+			stmp = s * (0.9 + 0.2 * cvRandReal(&rng));
+			//uniformly randomize row and column, ratio +-5% random
+			//rtmp = r + s*random.uniform(-0.05, 0.05)
+			rtmp = r + s*(0.05 - 0.1 *cvRandReal(&rng));
+			//ctmp = c + s*random.uniform(-0.05, 0.05)
+			ctmp = c + s*(0.05 - 0.1 *cvRandReal(&rng));
+			//write the randomized row, column and size (diameter of bounding box)
+			fprintf(fList, "\t%f %f %f\n",rtmp, ctmp, stmp);
+		}
+		fputc('\n',fList);
+	}
+}
+
+void exportmirrored(IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList, CvRNG rng)
+{
+	/*
+	 * exploit mirror symmetry of the face
+	 *
+	 * flip image, horizontal , so the dim is not changed!
+	 */
+	//im = numpy.asarray(ImageOps.mirror(Image.fromarray(im)))
+	cvFlip(image, image, 1);
+	// flip column, so the face bounding box is mirrored.
+	// the center of the bounding box is shifted in x-axis after the mirror, too.
+	//c = im.shape[1] - c
+	bbox.center_col = image->width - bbox.center_col ;
+	// export
+	export(image, bbox, id, fList, rng);
+}
+
+
+/*
  * read the object file list and store the list
  */
-int fnGenkiImgFileList(char *path)
+int readGenkiImgFileList(char *path)
 {
-  FILE *f;
-  char t[1024], filename[MAX_FILE_PATH_SIZE];
-  int ret=-1, len=1;
-  assert(path);
-  snprintf(filename, MAX_FILE_PATH_SIZE, "%s%s", path, CV_DATASET_GENKI_IMAGES);
+	FILE *f;
+	char t[1024], filename[MAX_FILE_PATH_SIZE];
+	int ret=-1, len=1;
+	assert(path);
+	snprintf(filename, MAX_FILE_PATH_SIZE, "%s%s", path, CV_DATASET_GENKI_IMAGES);
 
-  if((f=fopen(filename, "rt"))!=NULL){
-	while(fgets(t,1024,f) != NULL){
-	  TotalListFiles++;
-	  if(strnlen(t, 1024) > len) len = strnlen(t, 1024);
+	//counting the lines in the file.
+	if((f=fopen(filename, "rt"))!=NULL){
+		while(fgets(t,1024,f) != NULL){
+		TotalListFiles++;
+		if(strnlen(t, 1024) > len) len = strnlen(t, 1024);
 	}
 	MaxFileNameLen=len+1;//plus null
 	rewind(f);
 	printf("total %d lines, max strlen=%d\n", TotalListFiles, MaxFileNameLen);
+
 	if(TotalListFiles && MaxFileNameLen){
 	  int i = 0;
 	  pGenkiImgList = calloc(TotalListFiles, MaxFileNameLen);
@@ -70,11 +205,11 @@ int fnGenkiImgFileList(char *path)
 		if(l){
 		  if( (p[i][l-1] == '\n') || (p[i][l-1] == '\r'))
 			p[i][l-1]=0;
-		  printf("%d:%s\n",i, p[i]);
+		  //printf("%d:%s\n",i, p[i]);
 		}
 	  	i++;
 	  }
-	  printf("total %d files in the list\n",i);
+	  printf("total %d files in the list:%s\n",i, p[i-1]);
 	}
 	fclose(f);
 	ret = 0;
@@ -83,106 +218,147 @@ int fnGenkiImgFileList(char *path)
 }
 
 /*
- * read the bouding box (x,y,diameter) mapped to each file listed in images.txt
+ * GENKI/GENKI-R2009a/Subsets/GENKI-SZSL/GENKI-SZSL_labels.txt
+ * Each line is a bounding box of a face in the same line number of GENKI-SZSL_Images.txt.
+ * For example: the first line of GENKI-SZSL_Images.txt is "file0000000000003987.jpg",
+ * so the first line of GENKI-SZSL_labels.txt is the bounding box of the file file0000000000003987.jpg.
+ *
+ * read the face bounding box (x,y,diameter) mapped to each file listed in GENKI-SZSL_Images.txt
  */
-int fnGenkiList(char *path)
+int readGenkiLabelList(char *path)
 {
-  FILE *f;
-  char t[1024], filename[MAX_FILE_PATH_SIZE];
-  int ret=-1, bc=0;
-  assert(path);
-  snprintf(filename, MAX_FILE_PATH_SIZE, "%s%s", path, CV_DATASET_GENKI_LABELS);
+	FILE *f;
+	char str[MAX_FILE_PATH_SIZE], filename[MAX_FILE_PATH_SIZE];
+	int ret=-1, bc=0;
+	assert(path);
+	snprintf(filename, MAX_FILE_PATH_SIZE, "%s%s", path, CV_DATASET_GENKI_LABELS);
 
-  if((f=fopen(filename, "rt"))!=NULL){
-	while(fgets(t,1024,f) != NULL){
-	  bc++;
-	}
-	rewind(f);
-	printf("total %d box lines\n", bc);
-	if(bc){
-	  int i = 0;
-	  pGenkiLabelList = calloc(bc, sizeof(GENKI_FACE_BBOX));
-	  PGENKI_FACE_BBOX p = (PGENKI_FACE_BBOX)pGenkiImgList;
-	  while(	fscanf(f, "%d %d %d", &(p[i].center_col), &(p[i].center_row),
-				   &(p[i].diameter)) != EOF){
-		  printf("%d:(x,y,d)=(%d, %d, %d)\n",i, p[i].center_col,p[i].center_row,p[i].diameter );
-		  i++;
+	if((f=fopen(filename, "rt"))!=NULL){
+		while(fgets(str,MAX_FILE_PATH_SIZE,f) != NULL){
+			bc++;
 		}
+		rewind(f);
+		printf("total %d box lines\n", bc);
+		if(bc){
+			int i = 0;
+			pGenkiLabelList = calloc(bc, sizeof(GENKI_FACE_BBOX));
+			PGENKI_FACE_BBOX p = (PGENKI_FACE_BBOX)pGenkiLabelList;
+			while(	fscanf(f, "%d %d %d", &(p[i].center_col), &(p[i].center_row),
+						&(p[i].diameter)) != EOF){
+				//printf("%d:(x,y,d)=(%d, %d, %d)\n",i, p[i].center_col,p[i].center_row,p[i].diameter );
+				i++;
+			}
+			printf("total %d files in the list:(%d,%d,%d)\n",bc,
+				p[i-1].center_col, p[i-1].center_row, p[i-1].diameter);
+		}
+		fclose(f);
+		ret = 0;
+	}else{
+		printf("%s opening failure\n", filename);
 	}
-	printf("total %d files in the list\n",bc);
-	fclose(f);
-	ret = 0;
-  }
-  return ret;
+	return ret;
 }
 
-int meminfo()
+void memdump(void)
 {
-  struct sysinfo info;
-  sysinfo( &info );
-  printf("mem_unit=%lu\n", (size_t)info.mem_unit);
-  printf("total RAM=%lu\n", (size_t)info.totalram * (size_t)info.mem_unit);
-  printf("total Available RAM=%lu\n", (size_t)info.freeram * (size_t)info.mem_unit);
+	struct sysinfo info;
+	sysinfo( &info );
+	printf("mem_unit=%lu\n", (size_t)info.mem_unit);
+	printf("total RAM=%lu\n", (size_t)info.totalram * (size_t)info.mem_unit);
+	printf("total Available RAM=%lu\n", (size_t)info.freeram * (size_t)info.mem_unit);
 }
 
 int main(int argc, char **argv)
 {
-  unsigned long ulUsed=0;
-  int curObjIndex=0, totalNonObjFiles=0;
+	unsigned long ulUsed=0;
+	int curObjIndex=0;
+	int totalNonObjFiles=0;
+	CvRNG rng;
+	rng = cvRNG(cvGetTickCount());
 
-  //read the file list lines to curObjIndex
-  meminfo();
+	memdump();
+	if( (argc >= 3) && argv[1]){
+		char listFileName[MAX_FILE_PATH_SIZE];
+		char *srcfolder,*dstfolder;
+		srcfolder = argv[1];
+		dstfolder = argv[2];
+		readGenkiImgFileList(srcfolder);
+		readGenkiLabelList(srcfolder);
 
-  if( (argc >= 2) && argv[1]){
-	fnGenkiImgFileList(argv[1]);
-	fnGenkiList(argv[1]);
-  }
-  //char (*list)[MaxFileNameLen] = pGenkiImgList;
-  //printf("[%s]\n",list[1]);
-  //exit(1);
-  meminfo();
-  //allocating memory till 1G left!
-  if(pGenkiImgList && pGenkiLabelList){
-	printf(">>>\n");
-	#pragma omp parallel
-	{	int counts=0;
-		int id = omp_get_thread_num();//local to this thread
-		int cont=1;	//local to this thread stack
-		char (*list)[MaxFileNameLen] = pGenkiImgList;
-		char myFileName[MAX_FILE_PATH_SIZE];
-		memset(myFileName,0,MAX_FILE_PATH_SIZE);
-		while(cont){
-		  #pragma omp critical
-		  {//get an id to the file list, so the file can be opened later.
-			if(curObjIndex < TotalListFiles){
-				printf("%d : curObjIndex=%d, [%s]\n",id, curObjIndex, list[curObjIndex]);
-				//strncpy(myFileName, list[curObjIndex], MaxFileNameLen);
-				snprintf(myFileName, MAX_FILE_PATH_SIZE, "%s%s",argv[1], CV_DATASET_GENKI_IMAGES);
-				curObjIndex++;
-			}else{
-				printf("%d is done\n", id);
-				cont=0;
+		snprintf(listFileName, MAX_FILE_PATH_SIZE, "%s/list.txt",dstfolder);
+		FILE *fList = fopen(listFileName, "w" );
+		if(fList > 0){
+		#pragma omp parallel
+		{
+			int id = omp_get_thread_num();//local to this thread
+			int counts=0,i=0;
+			int cont=1;	//local to this thread stack
+			char (*list)[MaxFileNameLen] = pGenkiImgList;
+			char imgFileName[MAX_FILE_PATH_SIZE];
+			char ridFileName[MAX_FILE_PATH_SIZE];
+			IplImage *image=NULL;
+			PGENKI_FACE_BBOX fb=NULL;
+			CvRect roi;
+
+			while(cont){
+				memset(imgFileName,0,MAX_FILE_PATH_SIZE);
+				#pragma omp critical
+				{//get an id to the file list, so the file can be opened later.
+					if(curObjIndex < TotalListFiles){
+						snprintf(imgFileName, MAX_FILE_PATH_SIZE, "%s/files/%s",srcfolder, list[curObjIndex]);
+						i=curObjIndex++;
+						printf(">>>CR:%d:%d:%s\n", id, i, imgFileName);
+					}
+					if(curObjIndex >= TotalListFiles){
+						printf("%d is done\n", id);
+						cont=0;
+					}
+				}
+				if(imgFileName[0]){//load the image file
+					fb = (PGENKI_FACE_BBOX)pGenkiLabelList;
+					printf("i->%d\n", i);
+					printf("<<<TID[%d]:%d:(%d,%d,%d):%s\n", id, i,
+						   fb[i].center_col, fb[i].center_row, fb[i].diameter, imgFileName);
+					image= cvLoadImage(imgFileName, CV_LOAD_IMAGE_GRAYSCALE);
+					if(image){
+						roi = cvRect(fb[i].center_col - fb[i].diameter/2,//x
+												fb[i].center_row - fb[i].diameter/2,//y
+												fb[i].diameter,fb[i].diameter);//w, h
+						//printf(">>>i->%d\n", i);
+						//printf("depth:%d, channel=%d, (%d,%d)\n", image->depth, image->nChannels,
+						//								image->width, image->height);
+						snprintf(ridFileName, MAX_FILE_PATH_SIZE, "%s/face%d.rid",dstfolder,i*2);
+						printf("ridFileName=%s\n", ridFileName);
+						export(image, fb[i] , i*2, fList, rng);
+						saveAsRID(ridFileName, image, roi);
+						exportmirrored(image, fb[i] , i*2+1, fList, rng);
+						snprintf(ridFileName, MAX_FILE_PATH_SIZE, "%s/face%d.rid",dstfolder,i*2+1);
+						printf("ridFileName=%s\n", ridFileName);
+						saveAsRID(ridFileName, image, roi);
+						cvReleaseImage(&image);
+					}else{
+						printf("%s not found\n", imgFileName);
+						cont=0;
+					}
+				}else{
+					printf("TID:%d, null image\n", id);
+				}
 			}
-		  }
-		  if(cont){
-			printf("[%d]:%s is processing...\n",id, myFileName);
-			counts++;
-			sleep(random()%1);
-		  }
 		}
-		printf("<<<%d exits, total files [%d] processed.\n", id, counts);
+			fclose(fList);
+		}else{
+			printf("[%s]opening failure : %d\n", listFileName, errno);
+		}
+	}else{
+		printf("genki_path dst_path\n");
 	}
-	printf("total %d exit...\n", curObjIndex);
-  }
-
-  if(pGenkiImgList){
-	free(pGenkiImgList);
-	pGenkiImgList=NULL;
-  }
-  if(pGenkiLabelList){
-	free(pGenkiLabelList);
-	pGenkiLabelList=NULL;
-  }
-  meminfo();
-
+	if(pGenkiImgList){
+		free(pGenkiImgList);
+		pGenkiImgList=NULL;
+	}
+	if(pGenkiLabelList){
+		free(pGenkiLabelList);
+		pGenkiLabelList=NULL;
+	}
+	memdump();
 }
