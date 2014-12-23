@@ -20,7 +20,7 @@
 
 #define max( a, b ) ((a) > (b) ? (a) : (b) )
 #define min( a, b ) ((a) < (b) ? (a) : (b) )
-//inline int max ( int a, int b ) { return a > b ? a : b; }
+#define MAX_WIN_SIZE	(192.0)
 
 typedef struct _genki_bounding_box{
 int	center_col;	//X of the box center
@@ -34,38 +34,64 @@ void *pGenkiImgList;
 void *pGenkiLabelList;
 
 /*
- * raw intensity data
- *
- * im is an array/list from a cropped image around the face bounding box:
- * im dim : row * col
- * rid file : 4 bytes width, 4 bytes height , image data (row-wise)
+ * 0.0-1.0
  */
-int saveAsRID(char *path, IplImage* src,  CvRect roi)
+inline float rand_real(void)
+{
+	return rand()/(float)RAND_MAX;
+}
+
+/*
+ * rid : raw intensity data
+ *
+ * path : the destination rid file and verification .bmp file for a face bounding box.
+ * src : the grey level image of the genki face image.
+ * roi : the newly cropped image ROI to the src image. The newly cropped box is a little bigger
+ * 		around the face ROI.
+ * ratio : the max size is MAX_WIN_SIZE pixel. If the column or height is greater than 192,
+ * 		downsampling it to MAX_WIN_SIZE.
+ */
+int saveAsRID(char *path, IplImage* src,  CvRect roi, float ratio)
 {
 	//assert(path && src);
 	int fd = open(path, O_RDWR|O_CREAT|O_TRUNC, 0664 );
-	printf("%s:roi(x,y,w,h)=(%d,%d,%d,%d)\n",__func__, roi.x, roi.y,
+	/*printf("%s:roi(x,y,w,h)=(%d,%d,%d,%d)\n",__func__, roi.x, roi.y,
 		   roi.width, roi.height);
 	printf("src(w,h,s)=(%d,%d,%d)\n", src->width, src->height, src->imageSize);
+	*/
 	if(fd > 0){
 		// Must have dimensions of output image
 		IplImage* cropped = cvCreateImage( cvSize(roi.width,roi.height), src->depth, src->nChannels );
+		IplImage *dst = NULL;
 		if(cropped){
 			// Say what the source region is
 			cvSetImageROI( src, roi );
 			// Do the copy
-			printf("crop:%d x %d : %d bytes\n", cropped->width, cropped->height,
-				   cropped->imageSize);
-			printf("src:%d x %d : %d bytes\n", src->width, src->height,
-				   src->imageSize);
 			cvCopy( src, cropped, NULL );
+			if(ratio<1.0){//resize the cropped image
+				printf("src:%d x %d : %d bytes\n", src->width, src->height,
+					src->imageSize);
+				printf("crop:%d x %d : %d bytes\n", cropped->width, cropped->height,
+					cropped->imageSize);
+				CvSize dst_cvsize = cvSize(cropped->width * ratio, cropped->height * ratio);
+				dst = cvCreateImage( dst_cvsize, cropped->depth, cropped->nChannels);
+				cvResize(cropped, dst, CV_INTER_LANCZOS4);
+				printf("dst:%d x %d : %d bytes\n", dst->width, dst->height,
+					dst->imageSize);
+			}
 			cvResetImageROI( src );
-			sprintf(path + strlen(path)-3, "%s", "bmp");
-			cvSaveImage(path , cropped, 0);//rid's bmp file for reference.
+			if(dst){
+				strcpy(path + strlen(path)-4, "_r.bmp");
+				cvSaveImage(path , dst, 0);//rid's bmp file for reference.
+				cvReleaseImage(&dst);
+			}else{
+				strcpy(path + strlen(path)-3, "bmp");
+				cvSaveImage(path , cropped, 0);//rid's bmp file for reference.
+			}
 			write(fd, &roi.width,sizeof(int));	//4 bytes w
 			write(fd, &roi.height,sizeof(int));	//4 bytes h
 			write(fd, cropped->imageData, cropped->imageSize);	//body
-			printf("%d x %d : %d bytes\n", roi.width, roi.height, cropped->imageSize);
+			//printf("%d x %d : %d bytes\n", roi.width, roi.height, cropped->imageSize);
 			cvReleaseImage(&cropped);
 			close(fd);
 		}else{
@@ -78,13 +104,6 @@ int saveAsRID(char *path, IplImage* src,  CvRect roi)
 	return errno;
 }
 
-/*
- * 0.0-1.0
- */
-inline float rand_real(void)
-{
-	return rand()/(float)RAND_MAX;
-}
 /*
  * write 7 random boxes to list.txt for each rid.
  *  1 face0.rid
@@ -128,11 +147,10 @@ void export(char *dstfolder, IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE
 	c = c - c0;
 
 	//resize, if needed
-	float maxwsize = 192.0;
 	int wsize = max(nrows, ncols);
-	float ratio = maxwsize/wsize;
+	float ratio = MAX_WIN_SIZE/wsize;
 
-	if (ratio<1.0){//resize the pic because it's > maxwsize
+	if (ratio<1.0){//resize the pic because it's > MAX_WIN_SIZE
 		//im = numpy.asarray( Image.fromarray(im).resize((int(ratio*ncols), int(ratio*nrows))) )
 		printf("++++ratio=%f\n",ratio);
 		r = ratio*r;
@@ -146,7 +164,7 @@ void export(char *dstfolder, IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE
 		//creating 7 randomized face bounding boxes from the original bounding box
 		int nrands = 7;
 		//write '7' to list.txt
-		fprintf(fList, "\t%d\n",nrands);
+		fprintf(fList, "\t%d\tr=%.3f\n",nrands, ratio);
 		/*fprintf(fList, "\t[r0=%d\tr1=%d\tc0=%d\tc1=%d]\t[nrows=%d\tncols=%d]\n",
 				r0, 	r1, c0, c1, nrows, ncols);
 		fprintf(fList, "\t[%d\t%d\t%d]=>\t[r=%d\tc=%d\ts=%d]\n",
@@ -174,8 +192,8 @@ void export(char *dstfolder, IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE
 	char ridFileName[MAX_FILE_PATH_SIZE];
 	roi = cvRect(c0, r0, ncols-1, nrows-1);
 	snprintf(ridFileName, MAX_FILE_PATH_SIZE, "%s/face%d.rid",dstfolder, id);
-	printf("ridFileName=%s\n", ridFileName);
-	saveAsRID(ridFileName, image, roi);
+	//printf("ridFileName=%s\n", ridFileName);
+	saveAsRID(ridFileName, image, roi, ratio);
 }
 
 void exportmirrored(char *dstfolder, IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList)
@@ -328,7 +346,7 @@ int main(int argc, char **argv)
 					if(curObjIndex < TotalListFiles){
 						snprintf(imgFileName, MAX_FILE_PATH_SIZE, "%s/files/%s",srcfolder, list[curObjIndex]);
 						i=curObjIndex++;
-						printf(">>>CR:%d:%d:%s\n", id, i, imgFileName);
+						//printf(">>>CR:%d:%d:%s\n", id, i, imgFileName);
 					}
 					if(curObjIndex >= TotalListFiles){
 						printf("%d is done\n", id);
@@ -337,9 +355,9 @@ int main(int argc, char **argv)
 				}
 				if(imgFileName[0]){//load the image file
 					fb = (PGENKI_FACE_BBOX)pGenkiLabelList;
-					printf("i->%d\n", i);
-					printf("<<<TID[%d]:%d:(%d,%d,%d):%s\n", id, i,
-						   fb[i].center_col, fb[i].center_row, fb[i].diameter, imgFileName);
+					//printf("i->%d\n", i);
+					//printf("<<<TID[%d]:%d:(%d,%d,%d):%s\n", id, i,
+					//	   fb[i].center_col, fb[i].center_row, fb[i].diameter, imgFileName);
 					image= cvLoadImage(imgFileName, CV_LOAD_IMAGE_GRAYSCALE);
 					if(image){
 						//printf(">>>i->%d\n", i);
