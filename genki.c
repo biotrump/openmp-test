@@ -54,11 +54,14 @@ int saveAsRID(char *path, IplImage* src,  CvRect roi)
 			// Say what the source region is
 			cvSetImageROI( src, roi );
 			// Do the copy
-			//cvCopy( src, cropped, NULL );
 			printf("crop:%d x %d : %d bytes\n", cropped->width, cropped->height,
 				   cropped->imageSize);
+			printf("src:%d x %d : %d bytes\n", src->width, src->height,
+				   src->imageSize);
+			cvCopy( src, cropped, NULL );
 			cvResetImageROI( src );
-			//cvSaveImage (path , cropped);
+			sprintf(path + strlen(path)-3, "%s", "bmp");
+			cvSaveImage(path , cropped, 0);//rid's bmp file for reference.
 			write(fd, &roi.width,sizeof(int));	//4 bytes w
 			write(fd, &roi.height,sizeof(int));	//4 bytes h
 			write(fd, cropped->imageData, cropped->imageSize);	//body
@@ -75,7 +78,13 @@ int saveAsRID(char *path, IplImage* src,  CvRect roi)
 	return errno;
 }
 
-
+/*
+ * 0.0-1.0
+ */
+inline float rand_real(void)
+{
+	return rand()/(float)RAND_MAX;
+}
 /*
  * write 7 random boxes to list.txt for each rid.
  *  1 face0.rid
@@ -89,9 +98,10 @@ int saveAsRID(char *path, IplImage* src,  CvRect roi)
  *  9     51.473735 49.503986 67.789544
  *
  */
-void export(IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList, CvRNG rng)
+void export(char *dstfolder, IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList)
 {
 	assert(image);
+	CvRect roi;
 	int nrows = image->height;
 	int ncols = image->width;
 	int r, c, s;
@@ -124,7 +134,7 @@ void export(IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList, CvRNG rn
 
 	if (ratio<1.0){//resize the pic because it's > maxwsize
 		//im = numpy.asarray( Image.fromarray(im).resize((int(ratio*ncols), int(ratio*nrows))) )
-
+		printf("++++ratio=%f\n",ratio);
 		r = ratio*r;
 		c = ratio*c;
 		s = ratio*s;
@@ -137,25 +147,38 @@ void export(IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList, CvRNG rn
 		int nrands = 7;
 		//write '7' to list.txt
 		fprintf(fList, "\t%d\n",nrands);
+		/*fprintf(fList, "\t[r0=%d\tr1=%d\tc0=%d\tc1=%d]\t[nrows=%d\tncols=%d]\n",
+				r0, 	r1, c0, c1, nrows, ncols);
+		fprintf(fList, "\t[%d\t%d\t%d]=>\t[r=%d\tc=%d\ts=%d]\n",
+				bbox.center_row, bbox.center_col, bbox.diameter, r, c, s);
+		fprintf(fList, "\twsize=%d\tratio=%f\n",wsize, ratio);*/
 		int i;
 		for(i= 0; i < nrands; i ++){
 			float stmp, rtmp, ctmp;
 			//uniformly randomize size (diameter of the bounding box) ratio 0.9-1.1, 10% random
 			//stmp = s*random.uniform(0.9, 1.1)
-			stmp = s * (0.9 + 0.2 * cvRandReal(&rng));
+			//stmp = s * (0.9 + 0.2 * cvRandReal(&rng));
+			stmp = s * (0.9 + 0.2 * rand_real());
 			//uniformly randomize row and column, ratio +-5% random
 			//rtmp = r + s*random.uniform(-0.05, 0.05)
-			rtmp = r + s*(0.05 - 0.1 *cvRandReal(&rng));
+			//rtmp = r + s*(0.05 - 0.1 *cvRandReal(&rng));
+			rtmp = r + s*(0.05 - 0.1 *rand_real());
 			//ctmp = c + s*random.uniform(-0.05, 0.05)
-			ctmp = c + s*(0.05 - 0.1 *cvRandReal(&rng));
+			//ctmp = c + s*(0.05 - 0.1 *cvRandReal(&rng));
+			ctmp = c + s*(0.05 - 0.1 *rand_real());
 			//write the randomized row, column and size (diameter of bounding box)
 			fprintf(fList, "\t%f %f %f\n",rtmp, ctmp, stmp);
 		}
 		fputc('\n',fList);
 	}
+	char ridFileName[MAX_FILE_PATH_SIZE];
+	roi = cvRect(c0, r0, ncols-1, nrows-1);
+	snprintf(ridFileName, MAX_FILE_PATH_SIZE, "%s/face%d.rid",dstfolder, id);
+	printf("ridFileName=%s\n", ridFileName);
+	saveAsRID(ridFileName, image, roi);
 }
 
-void exportmirrored(IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList, CvRNG rng)
+void exportmirrored(char *dstfolder, IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList)
 {
 	/*
 	 * exploit mirror symmetry of the face
@@ -169,9 +192,8 @@ void exportmirrored(IplImage *image, GENKI_FACE_BBOX bbox, int id, FILE *fList, 
 	//c = im.shape[1] - c
 	bbox.center_col = image->width - bbox.center_col ;
 	// export
-	export(image, bbox, id, fList, rng);
+	export(dstfolder, image, bbox, id, fList);
 }
-
 
 /*
  * read the object file list and store the list
@@ -273,9 +295,9 @@ int main(int argc, char **argv)
 	unsigned long ulUsed=0;
 	int curObjIndex=0;
 	int totalNonObjFiles=0;
-	CvRNG rng;
-	rng = cvRNG(cvGetTickCount());
-
+	//CvRNG rng;
+	//rng = cvRNG(cvGetTickCount());
+	srand(time(NULL));
 	memdump();
 	if( (argc >= 3) && argv[1]){
 		char listFileName[MAX_FILE_PATH_SIZE];
@@ -295,10 +317,9 @@ int main(int argc, char **argv)
 			int cont=1;	//local to this thread stack
 			char (*list)[MaxFileNameLen] = pGenkiImgList;
 			char imgFileName[MAX_FILE_PATH_SIZE];
-			char ridFileName[MAX_FILE_PATH_SIZE];
+
 			IplImage *image=NULL;
 			PGENKI_FACE_BBOX fb=NULL;
-			CvRect roi;
 
 			while(cont){
 				memset(imgFileName,0,MAX_FILE_PATH_SIZE);
@@ -321,20 +342,11 @@ int main(int argc, char **argv)
 						   fb[i].center_col, fb[i].center_row, fb[i].diameter, imgFileName);
 					image= cvLoadImage(imgFileName, CV_LOAD_IMAGE_GRAYSCALE);
 					if(image){
-						roi = cvRect(fb[i].center_col - fb[i].diameter/2,//x
-												fb[i].center_row - fb[i].diameter/2,//y
-												fb[i].diameter,fb[i].diameter);//w, h
 						//printf(">>>i->%d\n", i);
 						//printf("depth:%d, channel=%d, (%d,%d)\n", image->depth, image->nChannels,
 						//								image->width, image->height);
-						snprintf(ridFileName, MAX_FILE_PATH_SIZE, "%s/face%d.rid",dstfolder,i*2);
-						printf("ridFileName=%s\n", ridFileName);
-						export(image, fb[i] , i*2, fList, rng);
-						saveAsRID(ridFileName, image, roi);
-						exportmirrored(image, fb[i] , i*2+1, fList, rng);
-						snprintf(ridFileName, MAX_FILE_PATH_SIZE, "%s/face%d.rid",dstfolder,i*2+1);
-						printf("ridFileName=%s\n", ridFileName);
-						saveAsRID(ridFileName, image, roi);
+						export(dstfolder, image, fb[i] , i*2, fList);
+						exportmirrored(dstfolder, image, fb[i] , i*2+1, fList);
 						cvReleaseImage(&image);
 					}else{
 						printf("%s not found\n", imgFileName);
