@@ -10,6 +10,7 @@
 #include <cv.h>
 #include <highgui.h>
 
+#include "genki.h"
 
 #define	MAX_OBJ_FILENAME_LEN	(81)
 #define	MAX_OBJ_FILES		(1000000)
@@ -21,12 +22,6 @@
 #define max( a, b ) ((a) > (b) ? (a) : (b) )
 #define min( a, b ) ((a) < (b) ? (a) : (b) )
 #define MAX_WIN_SIZE	(192.0)
-
-typedef struct _genki_bounding_box{
-int	center_col;	//X of the box center
-int center_row;	//Y of the box center
-int diameter;	//diameter of the box
-} GENKI_FACE_BBOX, *PGENKI_FACE_BBOX;
 
 int TotalListFiles;
 int MaxFileNameLen;
@@ -308,7 +303,7 @@ void memdump(void)
 	printf("total Available RAM=%lu\n", (size_t)info.freeram * (size_t)info.mem_unit);
 }
 
-int main(int argc, char **argv)
+int genki(char *facepath, char *nonfacepath, char *dst)
 {
 	unsigned long ulUsed=0;
 	int curObjIndex=0;
@@ -317,15 +312,13 @@ int main(int argc, char **argv)
 	//rng = cvRNG(cvGetTickCount());
 	srand(time(NULL));
 	memdump();
-	if( (argc >= 3) && argv[1]){
+	if( facepath && nonfacepath && dst){
 		char listFileName[MAX_FILE_PATH_SIZE];
-		char *srcfolder,*dstfolder;
-		srcfolder = argv[1];
-		dstfolder = argv[2];
-		readGenkiImgFileList(srcfolder);
-		readGenkiLabelList(srcfolder);
+		//char *srcfolder,*dstfolder;
+		readGenkiImgFileList(facepath);
+		readGenkiLabelList(facepath);
 
-		snprintf(listFileName, MAX_FILE_PATH_SIZE, "%s/list.txt",dstfolder);
+		snprintf(listFileName, MAX_FILE_PATH_SIZE, "%s/list.txt",dst);
 		FILE *fList = fopen(listFileName, "w" );
 		if(fList > 0){
 		#pragma omp parallel
@@ -344,7 +337,7 @@ int main(int argc, char **argv)
 				#pragma omp critical
 				{//get an id to the file list, so the file can be opened later.
 					if(curObjIndex < TotalListFiles){
-						snprintf(imgFileName, MAX_FILE_PATH_SIZE, "%s/files/%s",srcfolder, list[curObjIndex]);
+						snprintf(imgFileName, MAX_FILE_PATH_SIZE, "%s/files/%s",facepath, list[curObjIndex]);
 						i=curObjIndex++;
 						//printf(">>>CR:%d:%d:%s\n", id, i, imgFileName);
 					}
@@ -363,8 +356,8 @@ int main(int argc, char **argv)
 						//printf(">>>i->%d\n", i);
 						//printf("depth:%d, channel=%d, (%d,%d)\n", image->depth, image->nChannels,
 						//								image->width, image->height);
-						export(dstfolder, image, fb[i] , i*2, fList);
-						exportmirrored(dstfolder, image, fb[i] , i*2+1, fList);
+						export(dst, image, fb[i] , i*2, fList);
+						exportmirrored(dst, image, fb[i] , i*2+1, fList);
 						cvReleaseImage(&image);
 					}else{
 						printf("%s not found\n", imgFileName);

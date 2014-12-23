@@ -6,9 +6,15 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE "Debug")
 endif()
 message("CMAKE_BUILD_TYPE:" "${CMAKE_BUILD_TYPE}")
+
 #opencv should be built first!
-#export OPENCV_BUILD=~/build/opencv/build/3.0.x-static/
-set(OpenCV_DIR $ENV{OPENCV_BUILD})
+if(NOT OPENCV_BUILD)
+	set(OpenCV_DIR "~/build/opencv/build/3.0.x-static/")
+else()
+	set(OpenCV_DIR $ENV{OPENCV_BUILD})
+endif()
+
+
 message("++++OpenCV_DIR:""${OpenCV_DIR}")
 FIND_PACKAGE(OpenCV REQUIRED)
 if(OpenCV_FOUND)
@@ -55,6 +61,7 @@ TARGET_LINK_LIBRARIES( test3 ${OpenCV_LIBS} )
 
 ADD_EXECUTABLE( genki
 	genki.c
+	main.c
 	)
 
 #dynamic or static link
