@@ -12,17 +12,22 @@
 #define min( a, b ) ((a) < (b) ? (a) : (b) )
 #define MAX_WIN_SIZE	(192.0)
 
+#define _pr_debug(fmt, arg...) \
+	if (Verbose) fprintf(stderr, fmt, ##arg)
+
 typedef struct _genki_bounding_box{
 int	center_col;	//X of the box center
 int center_row;	//Y of the box center
 int diameter;	//diameter of the box
 } GENKI_FACE_BBOX, *PGENKI_FACE_BBOX;
 
-extern int genki(char *facepath, char *nonfacepath, char *dst);
+extern int genkiFace(char *facepath, char *riddst);
+extern int picoNonFace(char *nonfacepath, char *nonObjrid);
+extern void memdump(void);
 
 extern int TotalListFiles;
 extern int MaxFileNameLen;
 extern void *pGenkiImgList;
 extern void *pGenkiLabelList;
-
+extern int	Verbose;
 #endif

@@ -61,6 +61,7 @@ TARGET_LINK_LIBRARIES( test3 ${OpenCV_LIBS} )
 
 ADD_EXECUTABLE( genki
 	genki.c
+	pico-nonface.c
 	main.c
 	)
 

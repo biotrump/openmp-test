@@ -13,7 +13,8 @@
 
 #include "genki.h"
 
-char ridFolder[MAX_FILE_PATH_SIZE]="rid";
+char ridFolder[MAX_FILE_PATH_SIZE];//="rid";
+char nonObjRidFolder[MAX_FILE_PATH_SIZE];//="nonobj";
 int	Verbose;
 char genkiFacePath[MAX_FILE_PATH_SIZE];
 char nonFacePath[MAX_FILE_PATH_SIZE];
@@ -26,13 +27,14 @@ static void usage(FILE *fp, int argc, char **argv)
 		 "-f | --genkiface     genki face path\n"
 		 "-h | --help          Print this message\n"
 		 "-n | --nonface       non face path\n"
-		 "-r | --ridfolder     rid folder[%s]\n"
+		 "-r | --ridfolder     face rid folder[%s]\n"
+		 "-R | --nonobjrid     nonface rid folder[%s]\n"
 		 "-v | --verbose       Verbose output[%d]\n"
 		 "",
-		 argv[0], ridFolder, Verbose);
+		 argv[0], ridFolder, nonObjRidFolder, Verbose);
 }
 
-static const char short_options[] = "f:hn:r:v:";
+static const char short_options[] = "f:hn:r:R:v";
 
 static const struct option
 long_options[] = {
@@ -40,6 +42,7 @@ long_options[] = {
 	{ "genkiface",  required_argument, NULL, 'f' },
 	{ "nonface",  required_argument, NULL, 'n' },
 	{ "ridfolder",  required_argument, NULL, 'r' },
+	{ "nonobjrid",  required_argument, NULL, 'R' },
 	{ "verbose", 	no_argument,       NULL, 'v' },
 	{ 0, 0, 0, 0 }
 };
@@ -78,6 +81,15 @@ static int option(int argc, char **argv)
 				strncpy(ridFolder, optarg, strlen(optarg));
 			printf("r:%s\n", ridFolder);
 			break;
+		case 'R':
+			printf("optarg=%s, %zd\n", optarg, strlen(optarg));
+			if(optarg && strlen(optarg)){
+				strncpy(nonObjRidFolder, optarg, strlen(optarg));
+				printf("nonObjRidFolder=%s\n", nonObjRidFolder);
+			}
+			printf("R:%s\n", nonObjRidFolder);
+			//exit(1);
+			break;
 		case 'h':
 			usage(stdout, argc, argv);
 			r=-1;
@@ -101,5 +113,6 @@ int main(int argc, char **argv)
 		printf("Wrong args!!!\n");
 		exit(EXIT_FAILURE);
 	}
-	genki(genkiFacePath, nonFacePath, ridFolder );
+	genkiFace(genkiFacePath, ridFolder);
+	picoNonFace(nonFacePath, nonObjRidFolder );
 }
