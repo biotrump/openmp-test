@@ -86,6 +86,7 @@ int scanNonObjFile(char *path, FILE *fList)
 		char (*nonObj)[maxl] = pNonObjFileList;
 		char nonObjRIDName[20+maxl];
 		if(pNonObjFileList){
+			fprintf(fList, "%d\n",TotalNonObjListFiles);
 			while ( (i < n) && ((dir = readdir(d)) != NULL))
 			{
 				if(strncmp(".", dir->d_name, strlen(".")) &&
@@ -170,12 +171,12 @@ int picoNonFace(char *nonfacepath, char *nonObjrid)
 		}else{
 			printf("[%s]opening failure : %d\n", listFileName, errno);
 		}
+		if(pNonObjFileList){
+			free(pNonObjFileList);
+			pNonObjFileList=NULL;
+		}
 	}else{
 		printf("nonfacepath or nonObjrid is empty!!!\n");
-	}
-	if(pNonObjFileList){
-		free(pNonObjFileList);
-		pNonObjFileList=NULL;
 	}
 
 	memdump();

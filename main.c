@@ -30,20 +30,41 @@ static void usage(FILE *fp, int argc, char **argv)
 		 "-r | --ridfolder     face rid folder[%s]\n"
 		 "-R | --nonobjrid     nonface rid folder[%s]\n"
 		 "-v | --verbose       Verbose output[%d]\n"
+		 "   | --Itsr          init detector's tsr\n"
+		 "   | --Itsc          init detector's tsc\n"
+		 "   | --Inumstages    init detector's stages\n"
 		 "",
 		 argv[0], ridFolder, nonObjRidFolder, Verbose);
 }
 
 static const char short_options[] = "f:hn:r:R:v";
+/*
+--Itsr	: init detector tsr
+--Itsc	: init detector tsc
+--Inumstages	: init detector stages
+--srcdector : src detector file
+--targetdetector : target detector file
+--targetfpr	: the overall false positive rate : FP / (FP+TN),
+	FP: number of false positive samples whose ground truth is still negative samples,
+	TN : true negtive samples
+--tdepths : maximum decision tree depth. deeper gets slow response.
+--minstagetpr : minimum true positive rate per stage
+--maxstagefpr : maximum false positive rate per stage:
+				0.5 is maximum because a random guess possibility is 0.5.
+--maxtrees : a stage is an emsemble of trees, forest.
+*/
 
 static const struct option
 long_options[] = {
-	{ "help",   no_argument,       NULL, 'h' },
-	{ "genkiface",  required_argument, NULL, 'f' },
-	{ "nonface",  required_argument, NULL, 'n' },
-	{ "ridfolder",  required_argument, NULL, 'r' },
-	{ "nonobjrid",  required_argument, NULL, 'R' },
+	{ "help",   		no_argument,       NULL, 'h' },
+	{ "genkiface",  	required_argument, NULL, 'f' },
+	{ "nonface",  	required_argument, NULL, 'n' },
+	{ "ridfolder",  	required_argument, NULL, 'r' },
+	{ "nonobjrid",  	required_argument, NULL, 'R' },
 	{ "verbose", 	no_argument,       NULL, 'v' },
+	{ "Itsr", 		required_argument,       NULL, PICO_INIT_TSR },
+	{ "Itsc", 		required_argument,       NULL, PICO_INIT_TSC },
+	{ "Inumstages", required_argument,       NULL, PICO_INIT_STAGAES },
 	{ 0, 0, 0, 0 }
 };
 
@@ -96,6 +117,10 @@ static int option(int argc, char **argv)
 			break;
 		case 'v':
 			Verbose=1;
+			break;
+		case PICO_INIT_TSR:
+		case PICO_INIT_TSC:
+		case PICO_INIT_STAGAES:
 			break;
 		default:
 			printf("default\n");

@@ -365,6 +365,7 @@ int genkiFace(char *facepath,char *riddst)
 		plistBuf = calloc(TotalObjListFiles*2, (MAX_GENKI_RAND_BBOX+1)*MAX_OBJ_FILENAME_LEN);
 		if(plistBuf){
 			if(fList > 0){
+				fprintf(fList, "%d\n",TotalObjListFiles*2);
 			#pragma omp parallel
 			{
 				int id = omp_get_thread_num();//local to this thread
@@ -431,16 +432,17 @@ int genkiFace(char *facepath,char *riddst)
 		}else{
 			printf("listBuf allocation error\n");
 		}
+		if(pGenkiImgList){
+			free(pGenkiImgList);
+			pGenkiImgList=NULL;
+		}
+		if(pGenkiLabelList){
+			free(pGenkiLabelList);
+			pGenkiLabelList=NULL;
+		}
 	}else{
 		printf("facepath or riddst is empty...\n");
 	}
-	if(pGenkiImgList){
-		free(pGenkiImgList);
-		pGenkiImgList=NULL;
-	}
-	if(pGenkiLabelList){
-		free(pGenkiLabelList);
-		pGenkiLabelList=NULL;
-	}
+
 	memdump();
 }
